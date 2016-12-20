@@ -1,46 +1,118 @@
-add_definitions(-DSTATICLIB)
+# Copyright (c) 2014-2016, The Monero Project
+#
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without modification, are
+# permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this list of
+#    conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice, this list
+#    of conditions and the following disclaimer in the documentation and/or other
+#    materials provided with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its contributors may be
+#    used to endorse or promote products derived from this software without specific
+#    prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+# THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+# STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+# THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
-file(GLOB_RECURSE COMMON common/*)
-file(GLOB_RECURSE CRYPTO crypto/*)
-file(GLOB_RECURSE CRYPTONOTE_CORE cryptonote_core/*)
-file(GLOB_RECURSE CRYPTONOTE_PROTOCOL cryptonote_protocol/*)
-file(GLOB_RECURSE DAEMON daemon/*)
-file(GLOB_RECURSE P2P p2p/*)
-file(GLOB_RECURSE RPC rpc/*)
-file(GLOB_RECURSE SIMPLEWALLET simplewallet/*)
-file(GLOB_RECURSE CONN_TOOL connectivity_tool/*)
-file(GLOB_RECURSE WALLET wallet/*)
-file(GLOB_RECURSE MINER miner/*)
+if (WIN32 OR STATIC)
+  add_definitions(-DSTATICLIB)
+  # miniupnp changed their static define
+  add_definitions(-DMINIUPNP_STATICLIB)
+endif ()
 
-source_group(common FILES ${COMMON})
-source_group(crypto FILES ${CRYPTO})
-source_group(cryptonote_core FILES ${CRYPTONOTE_CORE})
-source_group(cryptonote_protocol FILES ${CRYPTONOTE_PROTOCOL})
-source_group(daemon FILES ${DAEMON})
-source_group(p2p FILES ${P2P})
-source_group(rpc FILES ${RPC})
-source_group(simplewallet FILES ${SIMPLEWALLET})
-source_group(connectivity-tool FILES ${CONN_TOOL})
-source_group(wallet FILES ${WALLET})
-source_group(simpleminer FILES ${MINER})
+function (monero_private_headers group)
+  source_group("${group}\\Private"
+    FILES
+      ${ARGN})
+endfunction ()
 
-add_library(common ${COMMON})
-add_library(crypto ${CRYPTO})
-add_library(cryptonote_core ${CRYPTONOTE_CORE})
-add_executable(daemon ${DAEMON} ${P2P} ${CRYPTONOTE_PROTOCOL})
-add_executable(connectivity_tool ${CONN_TOOL})
-add_executable(simpleminer ${MINER})
-target_link_libraries(daemon rpc cryptonote_core crypto common upnpc-static ${Boost_LIBRARIES})
-target_link_libraries(connectivity_tool cryptonote_core crypto common ${Boost_LIBRARIES})
-target_link_libraries(simpleminer cryptonote_core crypto common ${Boost_LIBRARIES})
-add_library(rpc ${RPC})
-add_library(wallet ${WALLET})
-add_executable(simplewallet ${SIMPLEWALLET} )
-target_link_libraries(simplewallet wallet rpc cryptonote_core crypto common upnpc-static ${Boost_LIBRARIES})
-add_dependencies(daemon version)
-add_dependencies(rpc version)
-add_dependencies(simplewallet version)
+function (monero_install_headers subdir)
+  install(
+    FILES       ${ARGN}
+    DESTINATION "include/${subdir}"
+    COMPONENT   development)
+endfunction ()
 
-set_property(TARGET common crypto cryptonote_core rpc wallet PROPERTY FOLDER "libs")
-set_property(TARGET daemon simplewallet connectivity_tool simpleminer PROPERTY FOLDER "prog")
-set_property(TARGET daemon PROPERTY OUTPUT_NAME "bitmonerod")
+function (enable_stack_trace target)
+  if(STACK_TRACE)
+    set_property(TARGET ${target}
+      APPEND PROPERTY COMPILE_DEFINITIONS "STACK_TRACE")
+    if (STATIC)
+      set_property(TARGET "${target}"
+        APPEND PROPERTY LINK_FLAGS "-Wl,--wrap=__cxa_throw")
+    endif()
+  endif()
+endfunction()
+
+function (monero_add_executable name)
+  source_group("${name}"
+    FILES
+      ${ARGN})
+
+  add_executable("${name}"
+    ${ARGN})
+  target_link_libraries("${name}"
+    PRIVATE
+      ${EXTRA_LIBRARIES})
+  set_property(TARGET "${name}"
+    PROPERTY
+      FOLDER "prog")
+  set_property(TARGET "${name}"
+    PROPERTY
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+  enable_stack_trace("${name}")
+endfunction ()
+
+function (monero_add_library name)
+  source_group("${name}"
+    FILES
+      ${ARGN})
+
+  # Define a ("virtual") object library and an actual library that links those
+  # objects together. The virtual libraries can be arbitrarily combined to link
+  # any subset of objects into one library archive. This is used for releasing
+  # libwallet, which combines multiple components.
+  set(objlib obj_${name})
+  add_library(${objlib} OBJECT ${ARGN})
+  add_library("${name}" $<TARGET_OBJECTS:${objlib}>)
+  set_property(TARGET "${name}"
+    PROPERTY
+      FOLDER "libs")
+  target_compile_definitions(${objlib}
+    PRIVATE $<TARGET_PROPERTY:${name},INTERFACE_COMPILE_DEFINITIONS>)
+endfunction ()
+
+add_subdirectory(common)
+add_subdirectory(crypto)
+add_subdirectory(ringct)
+add_subdirectory(cryptonote_core)
+add_subdirectory(blockchain_db)
+add_subdirectory(mnemonics)
+add_subdirectory(rpc)
+add_subdirectory(wallet)
+add_subdirectory(p2p)
+add_subdirectory(cryptonote_protocol)
+
+add_subdirectory(simplewallet)
+add_subdirectory(daemonizer)
+add_subdirectory(daemon)
+
+add_subdirectory(blockchain_utilities)
+
+if(PER_BLOCK_CHECKPOINT)
+  add_subdirectory(blocks)
+endif()

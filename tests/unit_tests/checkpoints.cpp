@@ -1,6 +1,32 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// Copyright (c) 2014-2016, The Monero Project
+// 
+// All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+// 
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+// 
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+// 
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// 
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #include "gtest/gtest.h"
 
@@ -9,7 +35,7 @@
 using namespace cryptonote;
 
 
-TEST(checkpoints_is_alternative_block_allowed, handles_empty_checkpoins)
+TEST(checkpoints_is_alternative_block_allowed, handles_empty_checkpoints)
 {
   checkpoints cp;
 
@@ -23,7 +49,7 @@ TEST(checkpoints_is_alternative_block_allowed, handles_empty_checkpoins)
 TEST(checkpoints_is_alternative_block_allowed, handles_one_checkpoint)
 {
   checkpoints cp;
-  cp.add_checkpoint(5, "0000000000000000000000000000000000000000000000000000000000000000");
+  ASSERT_TRUE(cp.add_checkpoint(5, "0000000000000000000000000000000000000000000000000000000000000000"));
 
   ASSERT_FALSE(cp.is_alternative_block_allowed(0, 0));
 
@@ -61,8 +87,8 @@ TEST(checkpoints_is_alternative_block_allowed, handles_one_checkpoint)
 TEST(checkpoints_is_alternative_block_allowed, handles_two_and_more_checkpoints)
 {
   checkpoints cp;
-  cp.add_checkpoint(5, "0000000000000000000000000000000000000000000000000000000000000000");
-  cp.add_checkpoint(9, "0000000000000000000000000000000000000000000000000000000000000000");
+  ASSERT_TRUE(cp.add_checkpoint(5, "0000000000000000000000000000000000000000000000000000000000000000"));
+  ASSERT_TRUE(cp.add_checkpoint(9, "0000000000000000000000000000000000000000000000000000000000000000"));
 
   ASSERT_FALSE(cp.is_alternative_block_allowed(0, 0));
 

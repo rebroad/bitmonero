@@ -1,6 +1,32 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// Copyright (c) 2014-2016, The Monero Project
+// 
+// All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+// 
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+// 
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+// 
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// 
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #include <cstdio>
 
@@ -17,11 +43,98 @@ using namespace epee;
 #else 
 #include <sys/utsname.h>
 #endif
+#include <boost/filesystem.hpp>
 
 
 namespace tools
 {
-  std::function<void(void)> signal_handler::m_handler;
+  std::function<void(int)> signal_handler::m_handler;
+
+  std::unique_ptr<std::FILE, tools::close_file> create_private_file(const std::string& name)
+  {
+#ifdef WIN32
+    struct close_handle
+    {
+      void operator()(HANDLE handle) const noexcept
+      {
+        CloseHandle(handle);
+      }
+    };
+
+    std::unique_ptr<void, close_handle> process = nullptr;
+    {
+      HANDLE temp{};
+      const bool fail = OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, std::addressof(temp)) == 0;
+      process.reset(temp);
+      if (fail)
+        return nullptr;
+    }
+
+    DWORD sid_size = 0;
+    GetTokenInformation(process.get(), TokenOwner, nullptr, 0, std::addressof(sid_size));
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+      return nullptr;
+
+    std::unique_ptr<char[]> sid{new char[sid_size]};
+    if (!GetTokenInformation(process.get(), TokenOwner, sid.get(), sid_size, std::addressof(sid_size)))
+      return nullptr;
+
+    const PSID psid = reinterpret_cast<const PTOKEN_OWNER>(sid.get())->Owner;
+    const DWORD daclSize =
+      sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) + GetLengthSid(psid) - sizeof(DWORD);
+
+    const std::unique_ptr<char[]> dacl{new char[daclSize]};
+    if (!InitializeAcl(reinterpret_cast<PACL>(dacl.get()), daclSize, ACL_REVISION))
+      return nullptr;
+
+    if (!AddAccessAllowedAce(reinterpret_cast<PACL>(dacl.get()), ACL_REVISION, (READ_CONTROL | FILE_GENERIC_READ | DELETE), psid))
+      return nullptr;
+
+    SECURITY_DESCRIPTOR descriptor{};
+    if (!InitializeSecurityDescriptor(std::addressof(descriptor), SECURITY_DESCRIPTOR_REVISION))
+      return nullptr;
+
+    if (!SetSecurityDescriptorDacl(std::addressof(descriptor), true, reinterpret_cast<PACL>(dacl.get()), false))
+      return nullptr;
+
+    SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), std::addressof(descriptor), false};
+    std::unique_ptr<void, close_handle> file{
+      CreateFile(
+        name.c_str(),
+        GENERIC_WRITE, FILE_SHARE_READ,
+        std::addressof(attributes),
+        CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY,
+        nullptr
+      )
+    };
+    if (file)
+    {
+      const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(file.get()), 0);
+      if (0 <= fd)
+      {
+        file.release();
+        std::FILE* real_file = _fdopen(fd, "w");
+        if (!real_file)
+        {
+          _close(fd);
+        }
+        return {real_file, tools::close_file{}};
+      }
+    }
+#else
+    const int fd = open(name.c_str(), (O_RDWR | O_EXCL | O_CREAT), S_IRUSR);
+    if (0 <= fd)
+    {
+      std::FILE* file = fdopen(fd, "w");
+      if (!file)
+      {
+        close(fd);
+      }
+      return {file, tools::close_file{}};
+    }
+#endif
+    return nullptr;
+  }
 
 #ifdef WIN32
   std::string get_windows_version_display_string()
@@ -287,18 +400,20 @@ std::string get_nix_version_display_string()
     return "";
   }
 #endif
-
+  
   std::string get_default_data_dir()
   {
-    //namespace fs = boost::filesystem;
+    /* Please for the love of god refactor  the ifdefs out of this */
+
+    // namespace fs = boost::filesystem;
     // Windows < Vista: C:\Documents and Settings\Username\Application Data\CRYPTONOTE_NAME
     // Windows >= Vista: C:\Users\Username\AppData\Roaming\CRYPTONOTE_NAME
     // Mac: ~/Library/Application Support/CRYPTONOTE_NAME
     // Unix: ~/.CRYPTONOTE_NAME
     std::string config_folder;
+
 #ifdef WIN32
-    // Windows
-    config_folder = get_special_folder_path(CSIDL_APPDATA, true) + "/" + CRYPTONOTE_NAME;
+    config_folder = get_special_folder_path(CSIDL_COMMON_APPDATA, true) + "\\" + CRYPTONOTE_NAME;
 #else
     std::string pathRet;
     char* pszHome = getenv("HOME");
@@ -360,5 +475,60 @@ std::string get_nix_version_display_string()
     code = ok ? 0 : errno;
 #endif
     return std::error_code(code, std::system_category());
+  }
+
+  bool sanitize_locale()
+  {
+    // boost::filesystem throws for "invalid" locales, such as en_US.UTF-8, or kjsdkfs,
+    // so reset it here before any calls to it
+    try
+    {
+      boost::filesystem::path p {std::string("test")};
+      p /= std::string("test");
+    }
+    catch (...)
+    {
+#if defined(__MINGW32__) || defined(__MINGW__)
+      putenv("LC_ALL=C");
+      putenv("LANG=C");
+#else
+      setenv("LC_ALL", "C", 1);
+      setenv("LANG", "C", 1);
+#endif
+      return true;
+    }
+    return false;
+  }
+  void set_strict_default_file_permissions(bool strict)
+  {
+#if defined(__MINGW32__) || defined(__MINGW__)
+    // no clue about the odd one out
+#else
+    mode_t mode = strict ? 077 : 0;
+    umask(mode);
+#endif
+  }
+
+  namespace
+  {
+    boost::mutex max_concurrency_lock;
+    unsigned max_concurrency = boost::thread::hardware_concurrency();
+  }
+
+  void set_max_concurrency(unsigned n)
+  {
+    if (n < 1)
+      n = boost::thread::hardware_concurrency();
+    unsigned hwc = boost::thread::hardware_concurrency();
+    if (n > hwc)
+      n = hwc;
+    boost::lock_guard<boost::mutex> lock(max_concurrency_lock);
+    max_concurrency = n;
+  }
+
+  unsigned get_max_concurrency()
+  {
+    boost::lock_guard<boost::mutex> lock(max_concurrency_lock);
+    return max_concurrency;
   }
 }

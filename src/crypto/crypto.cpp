@@ -1,28 +1,58 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// Copyright (c) 2014-2016, The Monero Project
+// 
+// All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+// 
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+// 
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+// 
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// 
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
-#include <alloca.h>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
-#include <mutex>
+#include <boost/thread/mutex.hpp>
+#include <boost/thread/lock_guard.hpp>
 
 #include "common/varint.h"
 #include "warnings.h"
 #include "crypto.h"
 #include "hash.h"
 
+#if !defined(__FreeBSD__) && !defined(__OpenBSD__) && !defined(__DragonFly__)
+ #include <alloca.h>
+#else
+ #include <stdlib.h>
+#endif
+
 namespace crypto {
 
   using std::abort;
   using std::int32_t;
   using std::int64_t;
-  using std::lock_guard;
-  using std::mutex;
   using std::size_t;
   using std::uint32_t;
   using std::uint64_t;
@@ -32,7 +62,7 @@ namespace crypto {
 #include "random.h"
   }
 
-  mutex random_lock;
+  boost::mutex random_lock;
 
   static inline unsigned char *operator &(ec_point &point) {
     return &reinterpret_cast<unsigned char &>(point);
@@ -50,9 +80,10 @@ namespace crypto {
     return &reinterpret_cast<const unsigned char &>(scalar);
   }
 
+  /* generate a random 32-byte (256-bit) integer and copy it to res */
   static inline void random_scalar(ec_scalar &res) {
     unsigned char tmp[64];
-    generate_random_bytes(64, tmp);
+    generate_random_bytes_not_thread_safe(64, tmp);
     sc_reduce(tmp);
     memcpy(&res, tmp, 32);
   }
@@ -62,12 +93,32 @@ namespace crypto {
     sc_reduce32(&res);
   }
 
-  void crypto_ops::generate_keys(public_key &pub, secret_key &sec) {
-    lock_guard<mutex> lock(random_lock);
+  /* 
+   * generate public and secret keys from a random 256-bit integer
+   * TODO: allow specifiying random value (for wallet recovery)
+   * 
+   */
+  secret_key crypto_ops::generate_keys(public_key &pub, secret_key &sec, const secret_key& recovery_key, bool recover) {
+    boost::lock_guard<boost::mutex> lock(random_lock);
     ge_p3 point;
-    random_scalar(sec);
+
+    secret_key rng;
+
+    if (recover)
+    {
+      rng = recovery_key;
+    }
+    else
+    {
+      random_scalar(rng);
+    }
+    sec = rng;
+    sc_reduce32(&sec);  // reduce in case second round of keys (sendkeys)
+
     ge_scalarmult_base(&point, &sec);
     ge_p3_tobytes(&pub, &point);
+
+    return rng;
   }
 
   bool crypto_ops::check_key(const public_key &key) {
@@ -100,7 +151,7 @@ namespace crypto {
     return true;
   }
 
-  static void derivation_to_scalar(const key_derivation &derivation, size_t output_index, ec_scalar &res) {
+  void crypto_ops::derivation_to_scalar(const key_derivation &derivation, size_t output_index, ec_scalar &res) {
     struct {
       key_derivation derivation;
       char output_index[(sizeof(size_t) * 8 + 6) / 7];
@@ -147,7 +198,7 @@ namespace crypto {
   };
 
   void crypto_ops::generate_signature(const hash &prefix_hash, const public_key &pub, const secret_key &sec, signature &sig) {
-    lock_guard<mutex> lock(random_lock);
+    boost::lock_guard<boost::mutex> lock(random_lock);
     ge_p3 tmp3;
     ec_scalar k;
     s_comm buf;
@@ -179,7 +230,7 @@ namespace crypto {
     buf.h = prefix_hash;
     buf.key = pub;
     if (ge_frombytes_vartime(&tmp3, &pub) != 0) {
-      abort();
+      return false;
     }
     if (sc_check(&sig.c) != 0 || sc_check(&sig.r) != 0) {
       return false;
@@ -212,23 +263,24 @@ namespace crypto {
 
 PUSH_WARNINGS
 DISABLE_VS_WARNINGS(4200)
+  struct ec_point_pair {
+    ec_point a, b;
+  };
   struct rs_comm {
     hash h;
-    struct {
-      ec_point a, b;
-    } ab[];
+    struct ec_point_pair ab[];
   };
 POP_WARNINGS
 
   static inline size_t rs_comm_size(size_t pubs_count) {
-    return sizeof(rs_comm) + pubs_count * sizeof(rs_comm().ab[0]);
+    return sizeof(rs_comm) + pubs_count * sizeof(ec_point_pair);
   }
 
   void crypto_ops::generate_ring_signature(const hash &prefix_hash, const key_image &image,
     const public_key *const *pubs, size_t pubs_count,
     const secret_key &sec, size_t sec_index,
     signature *sig) {
-    lock_guard<mutex> lock(random_lock);
+    boost::lock_guard<boost::mutex> lock(random_lock);
     size_t i;
     ge_p3 image_unp;
     ge_dsmp image_pre;
@@ -312,7 +364,7 @@ POP_WARNINGS
         return false;
       }
       if (ge_frombytes_vartime(&tmp3, &*pubs[i]) != 0) {
-        abort();
+        return false;
       }
       ge_double_scalarmult_base_vartime(&tmp2, &sig[i].c, &tmp3, &sig[i].r);
       ge_tobytes(&buf->ab[i].a, &tmp2);

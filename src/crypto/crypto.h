@@ -1,11 +1,38 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// Copyright (c) 2014-2016, The Monero Project
+// 
+// All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+// 
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+// 
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+// 
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// 
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #pragma once
 
 #include <cstddef>
-#include <mutex>
+#include <boost/thread/mutex.hpp>
+#include <boost/thread/lock_guard.hpp>
 #include <vector>
 
 #include "common/pod-class.h"
@@ -18,7 +45,7 @@ namespace crypto {
 #include "random.h"
   }
 
-  extern std::mutex random_lock;
+  extern boost::mutex random_lock;
 
 #pragma pack(push, 1)
   POD_CLASS ec_point {
@@ -35,6 +62,22 @@ namespace crypto {
 
   POD_CLASS secret_key: ec_scalar {
     friend class crypto_ops;
+  };
+
+  POD_CLASS public_keyV {
+    std::vector<public_key> keys;
+    int rows;
+  };
+
+  POD_CLASS secret_keyV {
+    std::vector<secret_key> keys;
+    int rows;
+  };
+
+  POD_CLASS public_keyM {
+    int cols;
+    int rows;
+    std::vector<secret_keyV> column_vectors;
   };
 
   POD_CLASS key_derivation: ec_point {
@@ -62,14 +105,16 @@ namespace crypto {
     void operator=(const crypto_ops &);
     ~crypto_ops();
 
-    static void generate_keys(public_key &, secret_key &);
-    friend void generate_keys(public_key &, secret_key &);
+    static secret_key generate_keys(public_key &pub, secret_key &sec, const secret_key& recovery_key = secret_key(), bool recover = false);
+    friend secret_key generate_keys(public_key &pub, secret_key &sec, const secret_key& recovery_key, bool recover);
     static bool check_key(const public_key &);
     friend bool check_key(const public_key &);
     static bool secret_key_to_public_key(const secret_key &, public_key &);
     friend bool secret_key_to_public_key(const secret_key &, public_key &);
     static bool generate_key_derivation(const public_key &, const secret_key &, key_derivation &);
     friend bool generate_key_derivation(const public_key &, const secret_key &, key_derivation &);
+    static void derivation_to_scalar(const key_derivation &derivation, size_t output_index, ec_scalar &res);
+    friend void derivation_to_scalar(const key_derivation &derivation, size_t output_index, ec_scalar &res);
     static bool derive_public_key(const key_derivation &, std::size_t, const public_key &, public_key &);
     friend bool derive_public_key(const key_derivation &, std::size_t, const public_key &, public_key &);
     static void derive_secret_key(const key_derivation &, std::size_t, const secret_key &, secret_key &);
@@ -90,20 +135,27 @@ namespace crypto {
       const public_key *const *, std::size_t, const signature *);
   };
 
+  /* Generate N random bytes
+   */
+  inline void rand(size_t N, uint8_t *bytes) {
+    boost::lock_guard<boost::mutex> lock(random_lock);
+    generate_random_bytes_not_thread_safe(N, bytes);
+  }
+
   /* Generate a value filled with random bytes.
    */
   template<typename T>
   typename std::enable_if<std::is_pod<T>::value, T>::type rand() {
     typename std::remove_cv<T>::type res;
-    std::lock_guard<std::mutex> lock(random_lock);
-    generate_random_bytes(sizeof(T), &res);
+    boost::lock_guard<boost::mutex> lock(random_lock);
+    generate_random_bytes_not_thread_safe(sizeof(T), &res);
     return res;
   }
 
   /* Generate a new key pair
    */
-  inline void generate_keys(public_key &pub, secret_key &sec) {
-    crypto_ops::generate_keys(pub, sec);
+  inline secret_key generate_keys(public_key &pub, secret_key &sec, const secret_key& recovery_key = secret_key(), bool recover = false) {
+    return crypto_ops::generate_keys(pub, sec, recovery_key, recover);
   }
 
   /* Check a public key. Returns true if it is valid, false otherwise.
@@ -130,6 +182,9 @@ namespace crypto {
   inline bool derive_public_key(const key_derivation &derivation, std::size_t output_index,
     const public_key &base, public_key &derived_key) {
     return crypto_ops::derive_public_key(derivation, output_index, base, derived_key);
+  }
+  inline void derivation_to_scalar(const key_derivation &derivation, size_t output_index, ec_scalar &res) {
+    return crypto_ops::derivation_to_scalar(derivation, output_index, res);
   }
   inline void derive_secret_key(const key_derivation &derivation, std::size_t output_index,
     const secret_key &base, secret_key &derived_key) {
@@ -181,6 +236,6 @@ namespace crypto {
   }
 }
 
-CRYPTO_MAKE_COMPARABLE(public_key)
+CRYPTO_MAKE_HASHABLE(public_key)
 CRYPTO_MAKE_HASHABLE(key_image)
 CRYPTO_MAKE_COMPARABLE(signature)

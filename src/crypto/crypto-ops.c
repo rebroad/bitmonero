@@ -1,6 +1,32 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// Copyright (c) 2014-2016, The Monero Project
+// 
+// All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+// 
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+// 
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+// 
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// 
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #include <assert.h>
 #include <stdint.h>
@@ -14,17 +40,15 @@ DISABLE_VS_WARNINGS(4146 4244)
 
 static void fe_mul(fe, const fe, const fe);
 static void fe_sq(fe, const fe);
-static void fe_tobytes(unsigned char *, const fe);
 static void ge_madd(ge_p1p1 *, const ge_p3 *, const ge_precomp *);
 static void ge_msub(ge_p1p1 *, const ge_p3 *, const ge_precomp *);
 static void ge_p2_0(ge_p2 *);
 static void ge_p3_dbl(ge_p1p1 *, const ge_p3 *);
-static void ge_sub(ge_p1p1 *, const ge_p3 *, const ge_cached *);
 static void fe_divpowm1(fe, const fe, const fe);
 
 /* Common functions */
 
-static uint64_t load_3(const unsigned char *in) {
+uint64_t load_3(const unsigned char *in) {
   uint64_t result;
   result = (uint64_t) in[0];
   result |= ((uint64_t) in[1]) << 8;
@@ -32,7 +56,7 @@ static uint64_t load_3(const unsigned char *in) {
   return result;
 }
 
-static uint64_t load_4(const unsigned char *in)
+uint64_t load_4(const unsigned char *in)
 {
   uint64_t result;
   result = (uint64_t) in[0];
@@ -94,7 +118,7 @@ Postconditions:
    |h| bounded by 1.1*2^26,1.1*2^25,1.1*2^26,1.1*2^25,etc.
 */
 
-static void fe_add(fe h, const fe f, const fe g) {
+void fe_add(fe h, const fe f, const fe g) {
   int32_t f0 = f[0];
   int32_t f1 = f[1];
   int32_t f2 = f[2];
@@ -232,7 +256,7 @@ static void fe_copy(fe h, const fe f) {
 
 /* From fe_invert.c */
 
-static void fe_invert(fe out, const fe z) {
+void fe_invert(fe out, const fe z) {
   fe t0;
   fe t1;
   fe t2;
@@ -1005,7 +1029,7 @@ Proof:
   so floor(2^(-255)(h + 19 2^(-25) h9 + 2^(-1))) = q.
 */
 
-static void fe_tobytes(unsigned char *s, const fe h) {
+void fe_tobytes(unsigned char *s, const fe h) {
   int32_t h0 = h[0];
   int32_t h1 = h[1];
   int32_t h2 = h[2];
@@ -1565,7 +1589,7 @@ void ge_scalarmult_base(ge_p3 *h, const unsigned char *a) {
 r = p - q
 */
 
-static void ge_sub(ge_p1p1 *r, const ge_p3 *p, const ge_cached *q) {
+void ge_sub(ge_p1p1 *r, const ge_p3 *p, const ge_cached *q) {
   fe t0;
   fe_add(r->X, p->Y, p->X);
   fe_sub(r->Y, p->Y, p->X);

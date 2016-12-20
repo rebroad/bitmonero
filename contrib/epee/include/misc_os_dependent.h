@@ -52,6 +52,14 @@ namespace misc_utils
         {
 #if defined(_MSC_VER)
                 return ::GetTickCount64();
+#elif defined(WIN32)
+                static LARGE_INTEGER pcfreq = {0};
+                LARGE_INTEGER ticks;
+                if (!pcfreq.QuadPart)
+                    QueryPerformanceFrequency(&pcfreq);
+                QueryPerformanceCounter(&ticks);
+                ticks.QuadPart *= 1000; /* we want msec */
+                return ticks.QuadPart / pcfreq.QuadPart;
 #elif defined(__MACH__)
                 clock_serv_t cclock;
                 mach_timespec_t mts;
@@ -98,7 +106,7 @@ namespace misc_utils
 
 	inline std::string get_thread_string_id()
 	{
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 		return boost::lexical_cast<std::string>(GetCurrentThreadId());
 #elif defined(__GNUC__)  
 		return boost::lexical_cast<std::string>(pthread_self());

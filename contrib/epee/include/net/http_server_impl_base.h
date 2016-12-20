@@ -45,14 +45,15 @@ namespace epee
 
   public:
     http_server_impl_base()
-        : m_net_server()
+        : m_net_server(epee::net_utils::e_connection_type_RPC)
     {}
 
     explicit http_server_impl_base(boost::asio::io_service& external_io_service)
         : m_net_server(external_io_service)
     {}
 
-    bool init(const std::string& bind_port = "0", const std::string& bind_ip = "0.0.0.0")
+    bool init(const std::string& bind_port = "0", const std::string& bind_ip = "0.0.0.0",
+      std::string user_agent = "", boost::optional<net_utils::http::http_auth::login> user = boost::none)
     {
 
       //set self as callback handler
@@ -60,6 +61,10 @@ namespace epee
 
       //here set folder for hosting reqests
       m_net_server.get_config_object().m_folder = "";
+
+      // workaround till we get auth/encryption
+      m_net_server.get_config_object().m_required_user_agent = std::move(user_agent);
+      m_net_server.get_config_object().m_user = std::move(user);
 
       LOG_PRINT_L0("Binding on " << bind_ip << ":" << bind_port);
       bool res = m_net_server.init_server(bind_port, bind_ip);
@@ -75,6 +80,7 @@ namespace epee
     {
       //go to loop
       LOG_PRINT("Run net_service loop( " << threads_count << " threads)...", LOG_LEVEL_0);
+      _fact_c("net/RPClog", "Run net_service loop( " << threads_count << " threads)...");
       if(!m_net_server.run_server(threads_count, wait))
       {
         LOG_ERROR("Failed to run net tcp server!");

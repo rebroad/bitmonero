@@ -156,6 +156,17 @@ using namespace std;
 
 		return csTmp;
 	}
+	static inline int get_index(const char *s, char c) { const char *ptr = (const char*)memchr(s, c, 16); return ptr ? ptr-s : -1; }
+	static inline 
+		std::string hex_to_dec_2bytes(const char *s)
+	{
+		const char *hex = get_hex_vals();
+		int i0 = get_index(hex, toupper(s[0]));
+		int i1 = get_index(hex, toupper(s[1]));
+		if (i0 < 0 || i1 < 0)
+			return std::string("%") + std::string(1, s[0]) + std::string(1, s[1]);
+		return std::string(1, i0 * 16 | i1);
+	}
 
 	static inline std::string convert(char val)
 	{
@@ -173,6 +184,25 @@ using namespace std;
 		{
 			if(is_unsafe(uri[i]))
 				result += convert(uri[i]);
+			else
+				result += uri[i];
+
+		}
+
+		return result;
+	}
+	static inline std::string convert_from_url_format(const std::string& uri)
+	{
+
+		std::string result;
+
+		for(size_t i = 0; i!= uri.size(); i++)
+		{
+			if(uri[i] == '%' && i + 2 < uri.size())
+			{
+				result += hex_to_dec_2bytes(uri.c_str() + i + 1);
+				i += 2;
+			}
 			else
 				result += uri[i];
 
@@ -509,7 +539,7 @@ using namespace std;
 							if(0 == chunk_size)
 							{
 								//Here is a small confusion
-								//In breif - if the chunk is the last one we need to get terminating sequence
+								//In brief - if the chunk is the last one we need to get terminating sequence
 								//along with the cipher, generally in the "ddd\r\n\r\n" form
 
 								for(it++;it != buff.end(); it++)
@@ -638,10 +668,10 @@ using namespace std;
 				LOG_FRAME("http_stream_filter::parse_cached_header(*)", LOG_LEVEL_4);
 				
 				STATIC_REGEXP_EXPR_1(rexp_mach_field, 
-					"\n?((Connection)|(Referer)|(Content-Length)|(Content-Type)|(Transfer-Encoding)|(Content-Encoding)|(Host)|(Cookie)"
-					//  12            3         4                5              6                   7                  8      9    
+					"\n?((Connection)|(Referer)|(Content-Length)|(Content-Type)|(Transfer-Encoding)|(Content-Encoding)|(Host)|(Cookie)|(User-Agent)"
+					//  12            3         4                5              6                   7                  8      9        10
 					"|([\\w-]+?)) ?: ?((.*?)(\r?\n))[^\t ]",	
-					//10             1112   13 
+					//11             1213   14
 					boost::regex::icase | boost::regex::normal);
 
 				boost::smatch		result;
@@ -653,8 +683,8 @@ using namespace std;
 				//lookup all fields and fill well-known fields
 				while( boost::regex_search( it_current_bound, it_end_bound, result, rexp_mach_field, boost::match_default) && result[0].matched) 
 				{
-					const size_t field_val = 12;
-					//const size_t field_etc_name = 10;
+					const size_t field_val = 13;
+					//const size_t field_etc_name = 11;
 
 					int i = 2; //start position = 2
 					if(result[i++].matched)//"Connection"
@@ -675,6 +705,8 @@ using namespace std;
 					}
 					else if(result[i++].matched)//"Cookie"
 						body_info.m_cookie = result[field_val];
+					else if(result[i++].matched)//"User-Agent"
+						body_info.m_user_agent = result[field_val];
 					else if(result[i++].matched)//e.t.c (HAVE TO BE MATCHED!)
 					{;}
 					else

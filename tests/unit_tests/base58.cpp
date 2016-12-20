@@ -1,6 +1,32 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// Copyright (c) 2014-2016, The Monero Project
+// 
+// All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+// 
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+// 
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+// 
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// 
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #include "gtest/gtest.h"
 
@@ -440,21 +466,22 @@ namespace
     "\x64\x18\x74\x51\x3a\x03\x57\x78\xa0\xc1\x77\x8d\x83\x32\x01\xe9"
     "\x22\x09\x39\x68\x9e\xdf\x1a\xbd\x5b\xc1\xd0\x31\xf7\x3e\xcd\x6c"
     "\x99\x3a\xdd\x66\xd6\x80\x88\x70\x45\x6a\xfe\xb8\xe7\xee\xb6\x8d");
-  std::string test_keys_addr_str = "2AaF4qEmER6dNeM6dfiBFL7kqund3HYGvMBF3ttsNd9SfzgYB6L7ep1Yg1osYJzLdaKAYSLVh6e6jKnAuzj3bw1oGyd1x7Z";
+  // DON'T ever use this as a destination for funds, as the keys are right above this comment...
+  std::string test_keys_addr_str = "4AzKEX4gXdJdNeM6dfiBFL7kqund3HYGvMBF3ttsNd9SfzgYB6L7ep1Yg1osYJzLdaKAYSLVh6e6jKnAuzj3bw1oGy9kXCb";
 }
 
 TEST(get_account_address_as_str, works_correctly)
 {
   cryptonote::account_public_address addr;
   ASSERT_TRUE(serialization::parse_binary(test_serialized_keys, addr));
-  std::string addr_str = cryptonote::get_account_address_as_str(addr);
+  std::string addr_str = cryptonote::get_account_address_as_str(false, addr);
   ASSERT_EQ(addr_str, test_keys_addr_str);
 }
 
 TEST(get_account_address_from_str, handles_valid_address)
 {
   cryptonote::account_public_address addr;
-  ASSERT_TRUE(cryptonote::get_account_address_from_str(addr, test_keys_addr_str));
+  ASSERT_TRUE(cryptonote::get_account_address_from_str(addr, false, test_keys_addr_str));
 
   std::string blob;
   ASSERT_TRUE(serialization::dump_binary(addr, blob));
@@ -467,7 +494,7 @@ TEST(get_account_address_from_str, fails_on_invalid_address_format)
   std::string addr_str = test_keys_addr_str;
   addr_str[0] = '0';
 
-  ASSERT_FALSE(cryptonote::get_account_address_from_str(addr, addr_str));
+  ASSERT_FALSE(cryptonote::get_account_address_from_str(addr, false, addr_str));
 }
 
 TEST(get_account_address_from_str, fails_on_invalid_address_prefix)
@@ -475,39 +502,39 @@ TEST(get_account_address_from_str, fails_on_invalid_address_prefix)
   std::string addr_str = base58::encode_addr(0, test_serialized_keys);
 
   cryptonote::account_public_address addr;
-  ASSERT_FALSE(cryptonote::get_account_address_from_str(addr, addr_str));
+  ASSERT_FALSE(cryptonote::get_account_address_from_str(addr, false, addr_str));
 }
 
 TEST(get_account_address_from_str, fails_on_invalid_address_content)
 {
-  std::string addr_str = base58::encode_addr(CRYPTONOTE_PUBLIC_ADDRESS_BASE58_PREFIX, test_serialized_keys.substr(1));
+  std::string addr_str = base58::encode_addr(config::CRYPTONOTE_PUBLIC_ADDRESS_BASE58_PREFIX, test_serialized_keys.substr(1));
 
   cryptonote::account_public_address addr;
-  ASSERT_FALSE(cryptonote::get_account_address_from_str(addr, addr_str));
+  ASSERT_FALSE(cryptonote::get_account_address_from_str(addr, false, addr_str));
 }
 
 TEST(get_account_address_from_str, fails_on_invalid_address_spend_key)
 {
   std::string serialized_keys_copy = test_serialized_keys;
   serialized_keys_copy[0] = '\0';
-  std::string addr_str = base58::encode_addr(CRYPTONOTE_PUBLIC_ADDRESS_BASE58_PREFIX, serialized_keys_copy);
+  std::string addr_str = base58::encode_addr(config::CRYPTONOTE_PUBLIC_ADDRESS_BASE58_PREFIX, serialized_keys_copy);
 
   cryptonote::account_public_address addr;
-  ASSERT_FALSE(cryptonote::get_account_address_from_str(addr, addr_str));
+  ASSERT_FALSE(cryptonote::get_account_address_from_str(addr, false, addr_str));
 }
 
 TEST(get_account_address_from_str, fails_on_invalid_address_view_key)
 {
   std::string serialized_keys_copy = test_serialized_keys;
   serialized_keys_copy.back() = '\x01';
-  std::string addr_str = base58::encode_addr(CRYPTONOTE_PUBLIC_ADDRESS_BASE58_PREFIX, serialized_keys_copy);
+  std::string addr_str = base58::encode_addr(config::CRYPTONOTE_PUBLIC_ADDRESS_BASE58_PREFIX, serialized_keys_copy);
 
   cryptonote::account_public_address addr;
-  ASSERT_FALSE(cryptonote::get_account_address_from_str(addr, addr_str));
+  ASSERT_FALSE(cryptonote::get_account_address_from_str(addr, false, addr_str));
 }
 
 TEST(get_account_address_from_str, parses_old_address_format)
 {
   cryptonote::account_public_address addr;
-  ASSERT_TRUE(cryptonote::get_account_address_from_str(addr, "002391bbbb24dea6fd95232e97594a27769d0153d053d2102b789c498f57a2b00b69cd6f2f5c529c1660f2f4a2b50178d6640c20ce71fe26373041af97c5b10236fc"));
+  ASSERT_TRUE(cryptonote::get_account_address_from_str(addr, false, "002391bbbb24dea6fd95232e97594a27769d0153d053d2102b789c498f57a2b00b69cd6f2f5c529c1660f2f4a2b50178d6640c20ce71fe26373041af97c5b10236fc"));
 }

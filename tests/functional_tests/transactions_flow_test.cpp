@@ -1,6 +1,32 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// Copyright (c) 2014-2016, The Monero Project
+// 
+// All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+// 
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+// 
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+// 
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// 
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/random_generator.hpp>
@@ -10,6 +36,12 @@
 using namespace epee;
 #include "wallet/wallet2.h"
 using namespace cryptonote;
+
+namespace
+{
+  uint64_t const TEST_FEE = 5000000000; // 5 * 10^9
+  uint64_t const TEST_DUST_THRESHOLD = 5000000000; // 5 * 10^9
+}
 
 std::string generate_random_wallet_name()
 {
@@ -52,7 +84,10 @@ bool do_send_money(tools::wallet2& w1, tools::wallet2& w2, size_t mix_in_factor,
 
   try
   {
-    w1.transfer(dsts, mix_in_factor, 0, DEFAULT_FEE, std::vector<uint8_t>(), tools::detail::null_split_strategy, tools::tx_dust_policy(DEFAULT_FEE), tx);
+    tools::wallet2::pending_tx ptx;
+    std::vector<size_t> indices = w1.select_available_outputs([](const tools::wallet2::transfer_details&) { return true; });
+    w1.transfer(dsts, mix_in_factor, indices, 0, TEST_FEE, std::vector<uint8_t>(), tools::detail::null_split_strategy, tools::tx_dust_policy(TEST_DUST_THRESHOLD), tx, ptx, true);
+    w1.commit_tx(ptx);
     return true;
   }
   catch (const std::exception&)
@@ -78,7 +113,7 @@ uint64_t get_money_in_first_transfers(const tools::wallet2::transfer_container& 
 
 bool transactions_flow_test(std::string& working_folder,
   std::string path_source_wallet,
-  std::string path_terget_wallet,
+  std::string path_target_wallet,
   std::string& daemon_addr_a,
   std::string& daemon_addr_b,
   uint64_t amount_to_transfer, size_t mix_in_factor, size_t transactions_count, size_t transactions_per_second)
@@ -88,14 +123,14 @@ bool transactions_flow_test(std::string& working_folder,
   if(path_source_wallet.empty())
     path_source_wallet = generate_random_wallet_name();
 
-  if(path_terget_wallet.empty())
-    path_terget_wallet = generate_random_wallet_name();
+  if(path_target_wallet.empty())
+    path_target_wallet = generate_random_wallet_name();
 
 
   try
   {
     w1.generate(working_folder + "/" + path_source_wallet, "");
-    w2.generate(working_folder + "/" + path_terget_wallet, "");
+    w2.generate(working_folder + "/" + path_target_wallet, "");
   }
   catch (const std::exception& e)
   {
@@ -105,7 +140,7 @@ bool transactions_flow_test(std::string& working_folder,
 
   w1.init(daemon_addr_a);
 
-  size_t blocks_fetched = 0;
+  uint64_t blocks_fetched = 0;
   bool received_money;
   bool ok;
   if(!w1.refresh(blocks_fetched, received_money, ok))
@@ -117,8 +152,8 @@ bool transactions_flow_test(std::string& working_folder,
   w2.init(daemon_addr_b);
 
   LOG_PRINT_GREEN("Using wallets: " << ENDL
-    << "Source:  " << w1.get_account().get_public_address_str() << ENDL << "Path: " << working_folder + "/" + path_source_wallet << ENDL
-    << "Target:  " << w2.get_account().get_public_address_str() << ENDL << "Path: " << working_folder + "/" + path_terget_wallet, LOG_LEVEL_1);
+    << "Source:  " << w1.get_account().get_public_address_str(false) << ENDL << "Path: " << working_folder + "/" + path_source_wallet << ENDL
+    << "Target:  " << w2.get_account().get_public_address_str(false) << ENDL << "Path: " << working_folder + "/" + path_target_wallet, LOG_LEVEL_1);
 
   //lets do some money
   epee::net_utils::http::http_simple_client http_client;
@@ -129,7 +164,7 @@ bool transactions_flow_test(std::string& working_folder,
 
   COMMAND_RPC_START_MINING::request daemon_req = AUTO_VAL_INIT(daemon_req);
   COMMAND_RPC_START_MINING::response daemon_rsp = AUTO_VAL_INIT(daemon_rsp);
-  daemon_req.miner_address = w1.get_account().get_public_address_str();
+  daemon_req.miner_address = w1.get_account().get_public_address_str(false);
   daemon_req.threads_count = 9;
   r = net_utils::invoke_http_json_remote_command2(daemon_addr_a + "/start_mining", daemon_req, daemon_rsp, http_client, 10000);
   CHECK_AND_ASSERT_MES(r, false, "failed to get getrandom_outs");
@@ -157,7 +192,7 @@ bool transactions_flow_test(std::string& working_folder,
       BOOST_FOREACH(tools::wallet2::transfer_details& td, incoming_transfers)
       {
         cryptonote::transaction tx_s;
-        bool r = do_send_money(w1, w1, 0, td.m_tx.vout[td.m_internal_output_index].amount - DEFAULT_FEE, tx_s, 50);
+        bool r = do_send_money(w1, w1, 0, td.m_tx.vout[td.m_internal_output_index].amount - TEST_FEE, tx_s, 50);
         CHECK_AND_ASSERT_MES(r, false, "Failed to send starter tx " << get_transaction_hash(tx_s));
         LOG_PRINT_GREEN("Starter transaction sent " << get_transaction_hash(tx_s), LOG_LEVEL_0);
         if(++count >= FIRST_N_TRANSFERS)
@@ -185,7 +220,7 @@ bool transactions_flow_test(std::string& working_folder,
   for(i = 0; i != transactions_count; i++)
   {
     uint64_t amount_to_tx = (amount_to_transfer - transfered_money) > transfer_size ? transfer_size: (amount_to_transfer - transfered_money);
-    while(w1.unlocked_balance() < amount_to_tx + DEFAULT_FEE)
+    while(w1.unlocked_balance() < amount_to_tx + TEST_FEE)
     {
       misc_utils::sleep_no_w(1000);
       LOG_PRINT_L0("not enough money, waiting for cashback or mining");
@@ -246,7 +281,7 @@ bool transactions_flow_test(std::string& working_folder,
     w2.get_transfers(tc);
     BOOST_FOREACH(tools::wallet2::transfer_details& td, tc)
     {
-      auto it = txs.find(get_transaction_hash(td.m_tx));
+      auto it = txs.find(td.m_txid);
       CHECK_AND_ASSERT_MES(it != txs.end(), false, "transaction not found in local cache");
       it->second.m_received_count += 1;
     }

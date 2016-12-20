@@ -1,18 +1,45 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// Copyright (c) 2014-2016, The Monero Project
+// 
+// All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+// 
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+// 
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+// 
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// 
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #pragma once 
 #include "chaingen.h"
 
 const size_t invalid_index_value = std::numeric_limits<size_t>::max();
+const uint64_t FIRST_BLOCK_REWARD = 17592186044415;
 
 
 template<class concrete_test>
 class gen_double_spend_base : public test_chain_unit_base
 {
 public:
-  static const uint64_t send_amount = MK_COINS(17);
+  static const uint64_t send_amount = FIRST_BLOCK_REWARD - TESTS_DEFAULT_FEE;
 
   gen_double_spend_base();
 
@@ -34,7 +61,7 @@ private:
 template<bool txs_keeped_by_block>
 struct gen_double_spend_in_tx : public gen_double_spend_base< gen_double_spend_in_tx<txs_keeped_by_block> >
 {
-  static const uint64_t send_amount = MK_COINS(17);
+  static const uint64_t send_amount = FIRST_BLOCK_REWARD - TESTS_DEFAULT_FEE;
   static const bool has_invalid_tx = true;
   static const size_t expected_pool_txs_count = 0;
   static const uint64_t expected_bob_balance = send_amount;
@@ -47,7 +74,7 @@ struct gen_double_spend_in_tx : public gen_double_spend_base< gen_double_spend_i
 template<bool txs_keeped_by_block>
 struct gen_double_spend_in_the_same_block : public gen_double_spend_base< gen_double_spend_in_the_same_block<txs_keeped_by_block> >
 {
-  static const uint64_t send_amount = MK_COINS(17);
+  static const uint64_t send_amount = FIRST_BLOCK_REWARD - TESTS_DEFAULT_FEE;
   static const bool has_invalid_tx = !txs_keeped_by_block;
   static const size_t expected_pool_txs_count = has_invalid_tx ? 1 : 2;
   static const uint64_t expected_bob_balance = send_amount;
@@ -60,7 +87,7 @@ struct gen_double_spend_in_the_same_block : public gen_double_spend_base< gen_do
 template<bool txs_keeped_by_block>
 struct gen_double_spend_in_different_blocks : public gen_double_spend_base< gen_double_spend_in_different_blocks<txs_keeped_by_block> >
 {
-  static const uint64_t send_amount = MK_COINS(17);
+  static const uint64_t send_amount = FIRST_BLOCK_REWARD - TESTS_DEFAULT_FEE;
   static const bool has_invalid_tx = !txs_keeped_by_block;
   static const size_t expected_pool_txs_count = has_invalid_tx ? 0 : 1;
   static const uint64_t expected_bob_balance = 0;
@@ -73,7 +100,7 @@ struct gen_double_spend_in_different_blocks : public gen_double_spend_base< gen_
 template<bool txs_keeped_by_block>
 struct gen_double_spend_in_alt_chain_in_the_same_block : public gen_double_spend_base< gen_double_spend_in_alt_chain_in_the_same_block<txs_keeped_by_block> >
 {
-  static const uint64_t send_amount = MK_COINS(17);
+  static const uint64_t send_amount = FIRST_BLOCK_REWARD - TESTS_DEFAULT_FEE;
   static const bool has_invalid_tx = !txs_keeped_by_block;
   static const size_t expected_pool_txs_count = has_invalid_tx ? 1 : 2;
   static const uint64_t expected_bob_balance = send_amount;
@@ -86,7 +113,7 @@ struct gen_double_spend_in_alt_chain_in_the_same_block : public gen_double_spend
 template<bool txs_keeped_by_block>
 struct gen_double_spend_in_alt_chain_in_different_blocks : public gen_double_spend_base< gen_double_spend_in_alt_chain_in_different_blocks<txs_keeped_by_block> >
 {
-  static const uint64_t send_amount = MK_COINS(17);
+  static const uint64_t send_amount = FIRST_BLOCK_REWARD - TESTS_DEFAULT_FEE;
   static const bool has_invalid_tx = !txs_keeped_by_block;
   static const size_t expected_pool_txs_count = has_invalid_tx ? 1 : 2;
   static const uint64_t expected_bob_balance = send_amount;
@@ -99,7 +126,7 @@ struct gen_double_spend_in_alt_chain_in_different_blocks : public gen_double_spe
 class gen_double_spend_in_different_chains : public test_chain_unit_base
 {
 public:
-  static const uint64_t send_amount = MK_COINS(17);
+  static const uint64_t send_amount = FIRST_BLOCK_REWARD - TESTS_DEFAULT_FEE;
   static const size_t expected_blockchain_height = 4 + 2 * CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW;
 
   gen_double_spend_in_different_chains();

@@ -26,11 +26,17 @@
 
 #pragma once
 
+#include "misc_log_ex.h"
 #include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <thread>
+#include <iostream>
+#ifdef __OpenBSD__
+#include <stdio.h>
+#endif
+#include <boost/thread.hpp>
 
 namespace epee
 {
@@ -42,7 +48,7 @@ namespace epee
       , m_has_read_request(false)
       , m_read_status(state_init)
     {
-      m_reader_thread = std::thread(std::bind(&async_stdin_reader::reader_thread_func, this));
+      m_reader_thread = boost::thread(std::bind(&async_stdin_reader::reader_thread_func, this));
     }
 
     ~async_stdin_reader()
@@ -56,7 +62,10 @@ namespace epee
       if (!start_read())
         return false;
 
-      std::unique_lock<std::mutex> lock(m_response_mutex);
+      if (state_eos == m_read_status)
+        return false;
+
+      boost::unique_lock<boost::mutex> lock(m_response_mutex);
       while (state_init == m_read_status)
       {
         m_response_cv.wait(lock);
@@ -69,10 +78,13 @@ namespace epee
         res = true;
       }
 
-      m_read_status = state_init;
+      if (!eos())
+        m_read_status = state_init;
 
       return res;
     }
+
+    bool eos() const { return m_read_status == state_eos; }
 
     void stop()
     {
@@ -92,7 +104,7 @@ namespace epee
   private:
     bool start_read()
     {
-      std::unique_lock<std::mutex> lock(m_request_mutex);
+      boost::unique_lock<boost::mutex> lock(m_request_mutex);
       if (!m_run.load(std::memory_order_relaxed) || m_has_read_request)
         return false;
 
@@ -103,7 +115,7 @@ namespace epee
 
     bool wait_read()
     {
-      std::unique_lock<std::mutex> lock(m_request_mutex);
+      boost::unique_lock<boost::mutex> lock(m_request_mutex);
       while (m_run.load(std::memory_order_relaxed) && !m_has_read_request)
       {
         m_request_cv.wait(lock);
@@ -121,7 +133,11 @@ namespace epee
     bool wait_stdin_data()
     {
 #if !defined(WIN32)
+      #ifdef __OpenBSD__
+      int stdin_fileno = fileno(stdin);
+      #else
       int stdin_fileno = ::fileno(stdin);
+      #endif
 
       while (m_run.load(std::memory_order_relaxed))
       {
@@ -138,6 +154,20 @@ namespace epee
           return false;
         else if (0 < retval)
           return true;
+      }
+#else
+      while (m_run.load(std::memory_order_relaxed))
+      {
+        int retval = ::WaitForSingleObject(::GetStdHandle(STD_INPUT_HANDLE), 100);
+        switch (retval)
+        {
+          case WAIT_FAILED:
+            return false;
+          case WAIT_OBJECT_0:
+            return true;
+          default:
+            break;
+        }
       }
 #endif
 
@@ -165,9 +195,14 @@ namespace epee
         {
           read_ok = false;
         }
-
+        if (std::cin.eof()) {
+          m_read_status = state_eos;
+          m_response_cv.notify_one();
+          break;
+        }
+        else
         {
-          std::unique_lock<std::mutex> lock(m_response_mutex);
+          boost::unique_lock<boost::mutex> lock(m_response_mutex);
           if (m_run.load(std::memory_order_relaxed))
           {
             m_line = std::move(line);
@@ -187,21 +222,22 @@ namespace epee
       state_init,
       state_success,
       state_error,
-      state_cancelled
+      state_cancelled,
+      state_eos
     };
 
   private:
-    std::thread m_reader_thread;
+    boost::thread m_reader_thread;
     std::atomic<bool> m_run;
 
     std::string m_line;
     bool m_has_read_request;
     t_state m_read_status;
 
-    std::mutex m_request_mutex;
-    std::mutex m_response_mutex;
-    std::condition_variable m_request_cv;
-    std::condition_variable m_response_cv;
+    boost::mutex m_request_mutex;
+    boost::mutex m_response_mutex;
+    boost::condition_variable m_request_cv;
+    boost::condition_variable m_response_cv;
   };
 
 
@@ -226,67 +262,91 @@ namespace epee
     }
 
     template<class chain_handler>
-    bool run(chain_handler ch_handler, const std::string& prompt = "#", const std::string& usage = "")
+    bool run(chain_handler ch_handler, const std::string& prompt = "#", const std::string& usage = "", std::function<void(void)> exit_handler = NULL)
     {
-      return run(prompt, usage, [&](const std::string& cmd) { return ch_handler(cmd); }, [] { });
+      return run(prompt, usage, [&](const std::string& cmd) { return ch_handler(cmd); }, exit_handler);
     }
 
     void stop()
     {
+      m_running = false;
       m_stdin_reader.stop();
     }
 
-  private:
-    template<typename t_cmd_handler, typename t_exit_handler>
-    bool run(const std::string& prompt, const std::string& usage, const t_cmd_handler& cmd_handler, const t_exit_handler& exit_handler)
+    void print_prompt()
     {
-      TRY_ENTRY();
+      if (!m_prompt.empty())
+      {
+        epee::log_space::set_console_color(epee::log_space::console_color_yellow, true);
+        std::cout << m_prompt;
+        if (' ' != m_prompt.back())
+          std::cout << ' ';
+        epee::log_space::reset_console_color();
+        std::cout.flush();
+      }
+    }
+
+  private:
+    template<typename t_cmd_handler>
+    bool run(const std::string& prompt, const std::string& usage, const t_cmd_handler& cmd_handler, std::function<void(void)> exit_handler)
+    {
       bool continue_handle = true;
+      m_prompt = prompt;
       while(continue_handle)
       {
-        if (!prompt.empty())
+        try
         {
-          epee::log_space::set_console_color(epee::log_space::console_color_yellow, true);
-          std::cout << prompt;
-          if (' ' != prompt.back())
-            std::cout << ' ';
-          epee::log_space::reset_console_color();
-          std::cout.flush();
-        }
+          if (!m_running)
+          {
+            break;
+          }
+          print_prompt();
 
-        std::string command;
-        if(!m_stdin_reader.get_line(command))
-        {
-          LOG_PRINT("Failed to read line. Stopping...", LOG_LEVEL_0);
-          continue_handle = false;
-          break;
-        }
-        string_tools::trim(command);
+          std::string command;
+          bool get_line_ret = m_stdin_reader.get_line(command);
+          if (!m_running || m_stdin_reader.eos())
+          {
+            break;
+          }
+          if (!get_line_ret)
+          {
+            LOG_PRINT("Failed to read line.", LOG_LEVEL_0);
+          }
+          string_tools::trim(command);
 
-        LOG_PRINT_L2("Read command: " << command);
-        if(0 == command.compare("exit") || 0 == command.compare("q"))
-        {
-          continue_handle = false;
-        }else if (command.empty())
-        {
-          continue;
+          LOG_PRINT_L2("Read command: " << command);
+          if (command.empty())
+          {
+            continue;
+          }
+          else if(cmd_handler(command))
+          {
+            continue;
+          }
+          else if(0 == command.compare("exit") || 0 == command.compare("q"))
+          {
+            continue_handle = false;
+          }
+          else
+          {
+            std::cout << "unknown command: " << command << std::endl;
+            std::cout << usage;
+          }
         }
-        else if(cmd_handler(command))
+        catch (const std::exception &ex)
         {
-          continue;
-        } else
-        {
-          std::cout << "unknown command: " << command << std::endl;
-          std::cout << usage;
+          LOG_ERROR("Exception at [console_handler], what=" << ex.what());
         }
       }
-      exit_handler();
+      if (exit_handler)
+        exit_handler();
       return true;
-      CATCH_ENTRY_L0("console_handler", false);
     }
 
   private:
     async_stdin_reader m_stdin_reader;
+    std::atomic<bool> m_running = {true};
+    std::string m_prompt;
   };
 
 
@@ -346,17 +406,11 @@ namespace epee
     return true;
   }*/
 
-  /************************************************************************/
-  /*                                                                      */
-  /************************************************************************/
-  class console_handlers_binder
-  {
-    typedef boost::function<bool (const std::vector<std::string> &)> console_command_handler;
-    typedef std::map<std::string, std::pair<console_command_handler, std::string> > command_handlers_map;
-    std::unique_ptr<boost::thread> m_console_thread;
-    command_handlers_map m_command_handlers;
-    async_console_handler m_console_handler;
+  class command_handler {
   public:
+    typedef boost::function<bool (const std::vector<std::string> &)> callback;
+    typedef std::map<std::string, std::pair<callback, std::string> > lookup;
+
     std::string get_usage()
     {
       std::stringstream ss;
@@ -372,12 +426,14 @@ namespace epee
       }
       return ss.str();
     }
-    void set_handler(const std::string& cmd, const console_command_handler& hndlr, const std::string& usage = "")
+
+    void set_handler(const std::string& cmd, const callback& hndlr, const std::string& usage = "")
     {
-      command_handlers_map::mapped_type & vt = m_command_handlers[cmd];
+      lookup::mapped_type & vt = m_command_handlers[cmd];
       vt.first = hndlr;
       vt.second = usage;
     }
+
     bool process_command_vec(const std::vector<std::string>& cmd)
     {
       if(!cmd.size())
@@ -395,17 +451,23 @@ namespace epee
       boost::split(cmd_v,cmd,boost::is_any_of(" "), boost::token_compress_on);
       return process_command_vec(cmd_v);
     }
+  private:
+    lookup m_command_handlers;
+  };
 
-    /*template<class t_srv>
-    bool start_handling(t_srv& srv, const std::string& usage_string = "")
+  /************************************************************************/
+  /*                                                                      */
+  /************************************************************************/
+  class console_handlers_binder : public command_handler
+  {
+    typedef command_handler::callback console_command_handler;
+    typedef command_handler::lookup command_handlers_map;
+    std::unique_ptr<boost::thread> m_console_thread;
+    async_console_handler m_console_handler;
+  public:
+    bool start_handling(const std::string& prompt, const std::string& usage_string = "", std::function<void(void)> exit_handler = NULL)
     {
-      start_default_console_handler_no_srv_param(&srv, boost::bind(&console_handlers_binder::process_command_str, this, _1));
-      return true;
-    }*/
-
-    bool start_handling(const std::string& prompt, const std::string& usage_string = "")
-    {
-      m_console_thread.reset(new boost::thread(boost::bind(&console_handlers_binder::run_handling, this, prompt, usage_string)));
+      m_console_thread.reset(new boost::thread(boost::bind(&console_handlers_binder::run_handling, this, prompt, usage_string, exit_handler)));
       m_console_thread->detach();
       return true;
     }
@@ -415,44 +477,42 @@ namespace epee
       m_console_handler.stop();
     }
 
-    bool run_handling(const std::string& prompt, const std::string& usage_string)
+    bool run_handling(const std::string& prompt, const std::string& usage_string, std::function<void(void)> exit_handler = NULL)
     {
-      return m_console_handler.run(boost::bind(&console_handlers_binder::process_command_str, this, _1), prompt, usage_string);
+      return m_console_handler.run(boost::bind(&console_handlers_binder::process_command_str, this, _1), prompt, usage_string, exit_handler);
     }
 
-    /*template<class t_srv>
-    bool run_handling(t_srv& srv, const std::string& usage_string)
+    void print_prompt()
     {
-      return run_default_console_handler_no_srv_param(&srv, boost::bind<bool>(&console_handlers_binder::process_command_str, this, _1), usage_string);
-    }*/
+      m_console_handler.print_prompt();
+    }
   };
 
-  /* work around because of broken boost bind */
-  template<class t_server>
-  class srv_console_handlers_binder: public console_handlers_binder
-  {
-    bool process_command_str(t_server* /*psrv*/, const std::string& cmd)
-    {
-      return console_handlers_binder::process_command_str(cmd);
-    }
-  public:
-    bool start_handling(t_server* psrv, const std::string& prompt, const std::string& usage_string = "")
-    {
-      boost::thread(boost::bind(&srv_console_handlers_binder<t_server>::run_handling, this, psrv, prompt, usage_string)).detach();
-      return true;
-    }
+  ///* work around because of broken boost bind */
+  //template<class t_server>
+  //class srv_console_handlers_binder: public command_handler
+  //{
+  //  async_console_handler m_console_handler;
+  //public:
+  //  bool start_handling(t_server* psrv, const std::string& prompt, const std::string& usage_string = "")
+  //  {
+  //    boost::thread(boost::bind(&srv_console_handlers_binder<t_server>::run_handling, this, psrv, prompt, usage_string)).detach();
+  //    return true;
+  //  }
 
-    bool run_handling(t_server* psrv, const std::string& prompt, const std::string& usage_string)
-    {
-      return m_console_handler.run(psrv, boost::bind(&srv_console_handlers_binder<t_server>::process_command_str, this, _1, _2), prompt, usage_string);
-    }
+  //  bool run_handling(t_server* psrv, const std::string& prompt, const std::string& usage_string)
+  //  {
+  //    return m_console_handler.run(psrv, boost::bind(&srv_console_handlers_binder<t_server>::process_command_str, this, _1, _2), prompt, usage_string);
+  //  }
 
-    void stop_handling()
-    {
-      m_console_handler.stop();
-    }
-
-  private:
-    async_console_handler m_console_handler;
-  };
+  //  void stop_handling()
+  //  {
+  //    m_console_handler.stop();
+  //  }
+  //private:
+  //  bool process_command_str(t_server* /*psrv*/, const std::string& cmd)
+  //  {
+  //    return console_handlers_binder::process_command_str(cmd);
+  //  }
+  //};
 }

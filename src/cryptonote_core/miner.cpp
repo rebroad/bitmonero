@@ -1,7 +1,32 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
+// Copyright (c) 2014-2016, The Monero Project
+//
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+//
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+//
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #include <sstream>
 #include <numeric>
@@ -23,7 +48,8 @@ using namespace epee;
 #include "miner.h"
 
 
-
+extern "C" void slow_hash_allocate_state();
+extern "C" void slow_hash_free_state();
 namespace cryptonote
 {
 
@@ -42,9 +68,9 @@ namespace cryptonote
     m_thread_index(0),
     m_phandler(phandler),
     m_height(0),
-    m_pausers_count(0), 
+    m_pausers_count(0),
     m_threads_total(0),
-    m_starter_nonce(0), 
+    m_starter_nonce(0),
     m_last_hr_merge_time(0),
     m_hashes(0),
     m_do_print_hashrate(false),
@@ -83,7 +109,7 @@ namespace cryptonote
     block bl = AUTO_VAL_INIT(bl);
     difficulty_type di = AUTO_VAL_INIT(di);
     uint64_t height = AUTO_VAL_INIT(height);
-    cryptonote::blobdata extra_nonce; 
+    cryptonote::blobdata extra_nonce;
     if(m_extra_messages.size() && m_config.current_extra_message_index < m_extra_messages.size())
     {
       extra_nonce = m_extra_messages[m_config.current_extra_message_index];
@@ -109,7 +135,7 @@ namespace cryptonote
       merge_hr();
       return true;
     });
-    
+
     return true;
   }
   //-----------------------------------------------------------------------------------------------------
@@ -145,7 +171,7 @@ namespace cryptonote
     command_line::add_arg(desc, arg_mining_threads);
   }
   //-----------------------------------------------------------------------------------------------------
-  bool miner::init(const boost::program_options::variables_map& vm)
+  bool miner::init(const boost::program_options::variables_map& vm, bool testnet)
   {
     if(command_line::has_arg(vm, arg_extra_messages))
     {
@@ -172,7 +198,7 @@ namespace cryptonote
 
     if(command_line::has_arg(vm, arg_start_mining))
     {
-      if(!cryptonote::get_account_address_from_str(m_mine_address, command_line::get_arg(vm, arg_start_mining)))
+      if(!cryptonote::get_account_address_from_str(m_mine_address, testnet, command_line::get_arg(vm, arg_start_mining)))
       {
         LOG_ERROR("Target account address " << command_line::get_arg(vm, arg_start_mining) << " has wrong format, starting daemon canceled");
         return false;
@@ -201,7 +227,7 @@ namespace cryptonote
   uint32_t miner::get_threads_count() const {
     return m_threads_total;
   }
-  //----------------------------------------------------------------------------------------------------- 
+  //-----------------------------------------------------------------------------------------------------
   bool miner::start(const account_public_address& adr, size_t threads_count, const boost::thread::attributes& attrs)
   {
     m_mine_address = adr;
@@ -231,7 +257,7 @@ namespace cryptonote
       m_threads.push_back(boost::thread(attrs, boost::bind(&miner::worker_thread, this)));
     }
 
-    LOG_PRINT_L0("Mining has started with " << threads_count << " threads, good luck!" )
+    LOG_PRINT_L0("Mining has started with " << threads_count << " threads, good luck!" );
     return true;
   }
   //-----------------------------------------------------------------------------------------------------
@@ -252,14 +278,22 @@ namespace cryptonote
   //-----------------------------------------------------------------------------------------------------
   bool miner::stop()
   {
+    LOG_PRINT_L1("Miner has received stop signal");
+
+    if (!is_mining())
+    {
+      LOG_PRINT_L1("Not mining - nothing to stop" );
+      return true;
+    }
+
     send_stop_signal();
     CRITICAL_REGION_LOCAL(m_threads_lock);
 
     BOOST_FOREACH(boost::thread& th, m_threads)
       th.join();
 
-    m_threads.clear();
     LOG_PRINT_L0("Mining has been stopped, " << m_threads.size() << " finished" );
+    m_threads.clear();
     return true;
   }
   //-----------------------------------------------------------------------------------------------------
@@ -320,6 +354,7 @@ namespace cryptonote
     difficulty_type local_diff = 0;
     uint32_t local_template_ver = 0;
     block b;
+    slow_hash_allocate_state();
     while(!m_stop)
     {
       if(m_pausers_count)//anti split workaround
@@ -330,7 +365,6 @@ namespace cryptonote
 
       if(local_template_ver != m_template_no)
       {
-        
         CRITICAL_REGION_BEGIN(m_template_lock);
         b = m_template;
         local_diff = m_diffic;
@@ -362,12 +396,14 @@ namespace cryptonote
         }else
         {
           //success update, lets update config
-          epee::serialization::store_t_to_json_file(m_config, m_config_folder_path + "/" + MINER_CONFIG_FILE_NAME);
+          if (!m_config_folder_path.empty())
+            epee::serialization::store_t_to_json_file(m_config, m_config_folder_path + "/" + MINER_CONFIG_FILE_NAME);
         }
       }
       nonce+=m_threads_total;
       ++m_hashes;
     }
+    slow_hash_free_state();
     LOG_PRINT_L0("Miner thread stopped ["<< th_local_index << "]");
     return true;
   }

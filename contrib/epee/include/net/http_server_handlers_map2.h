@@ -55,8 +55,8 @@
 
 #define MAP_URI_AUTO_XML2(s_pattern, callback_f, command_type) //TODO: don't think i ever again will use xml - ambiguous and "overtagged" format
 
-#define MAP_URI_AUTO_JON2(s_pattern, callback_f, command_type) \
-    else if(query_info.m_URI == s_pattern) \
+#define MAP_URI_AUTO_JON2_IF(s_pattern, callback_f, command_type, cond) \
+    else if((query_info.m_URI == s_pattern) && (cond)) \
     { \
       handled = true; \
       uint64_t ticks = misc_utils::get_tick_count(); \
@@ -65,7 +65,7 @@
       CHECK_AND_ASSERT_MES(parse_res, false, "Failed to parse json: \r\n" << query_info.m_body); \
       uint64_t ticks1 = epee::misc_utils::get_tick_count(); \
       boost::value_initialized<command_type::response> resp;\
-      if(!callback_f(static_cast<command_type::request&>(req), static_cast<command_type::response&>(resp), m_conn_context)) \
+      if(!callback_f(static_cast<command_type::request&>(req), static_cast<command_type::response&>(resp))) \
       { \
         LOG_ERROR("Failed to " << #callback_f << "()"); \
         response_info.m_response_code = 500; \
@@ -80,6 +80,8 @@
       LOG_PRINT( s_pattern << " processed with " << ticks1-ticks << "/"<< ticks2-ticks1 << "/" << ticks3-ticks2 << "ms", LOG_LEVEL_2); \
     }
 
+#define MAP_URI_AUTO_JON2(s_pattern, callback_f, command_type) MAP_URI_AUTO_JON2_IF(s_pattern, callback_f, command_type, true)
+
 #define MAP_URI_AUTO_BIN2(s_pattern, callback_f, command_type) \
     else if(query_info.m_URI == s_pattern) \
     { \
@@ -90,7 +92,7 @@
       CHECK_AND_ASSERT_MES(parse_res, false, "Failed to parse bin body data, body size=" << query_info.m_body.size()); \
       uint64_t ticks1 = misc_utils::get_tick_count(); \
       boost::value_initialized<command_type::response> resp;\
-      if(!callback_f(static_cast<command_type::request&>(req), static_cast<command_type::response&>(resp), m_conn_context)) \
+      if(!callback_f(static_cast<command_type::request&>(req), static_cast<command_type::response&>(resp))) \
       { \
         LOG_ERROR("Failed to " << #callback_f << "()"); \
         response_info.m_response_code = 500; \
@@ -166,14 +168,14 @@
   response_info.m_header_info.m_content_type = " application/json"; \
   LOG_PRINT( query_info.m_URI << "[" << method_name << "] processed with " << ticks1-ticks << "/"<< ticks2-ticks1 << "/" << ticks3-ticks2 << "ms", LOG_LEVEL_2);
 
-#define MAP_JON_RPC_WE(method_name, callback_f, command_type) \
-    else if(callback_name == method_name) \
+#define MAP_JON_RPC_WE_IF(method_name, callback_f, command_type, cond) \
+    else if((callback_name == method_name) && (cond)) \
 { \
   PREPARE_OBJECTS_FROM_JSON(command_type) \
   epee::json_rpc::error_response fail_resp = AUTO_VAL_INIT(fail_resp); \
   fail_resp.jsonrpc = "2.0"; \
   fail_resp.id = req.id; \
-  if(!callback_f(req.params, resp.result, fail_resp.error, m_conn_context)) \
+  if(!callback_f(req.params, resp.result, fail_resp.error)) \
   { \
     epee::serialization::store_t_to_json(static_cast<epee::json_rpc::error_response&>(fail_resp), response_info.m_body); \
     return true; \
@@ -181,6 +183,8 @@
   FINALIZE_OBJECTS_TO_JSON(method_name) \
   return true;\
 }
+
+#define MAP_JON_RPC_WE(method_name, callback_f, command_type) MAP_JON_RPC_WE_IF(method_name, callback_f, command_type, true)
 
 #define MAP_JON_RPC_WERI(method_name, callback_f, command_type) \
     else if(callback_name == method_name) \
@@ -202,7 +206,7 @@
     else if(callback_name == method_name) \
 { \
   PREPARE_OBJECTS_FROM_JSON(command_type) \
-  if(!callback_f(req.params, resp.result, m_conn_context)) \
+  if(!callback_f(req.params, resp.result)) \
   { \
     epee::json_rpc::error_response fail_resp = AUTO_VAL_INIT(fail_resp); \
     fail_resp.jsonrpc = "2.0"; \
